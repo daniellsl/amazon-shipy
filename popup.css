@@ -1,0 +1,163 @@
+:root {
+  color-scheme: light;
+  --bg: #f7f8fa;
+  --panel: #ffffff;
+  --panel-2: #eef2f6;
+  --text: #1f2933;
+  --muted: #667085;
+  --line: #d7dee8;
+  --accent: #ff9900;
+  --accent-dark: #b86e00;
+  --success: #087443;
+  --missing: #9a3412;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 420px;
+  max-width: 420px;
+  overflow-x: hidden;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.app {
+  padding: 16px;
+}
+
+.header,
+.actions,
+.field-head,
+.copy-row {
+  display: flex;
+  gap: 10px;
+}
+
+.header {
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.1;
+}
+
+p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+
+button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #111827;
+  font-weight: 700;
+}
+
+.icon-button {
+  width: 34px;
+  padding: 0;
+  font-size: 18px;
+}
+
+.summary,
+.field-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.summary {
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  color: var(--muted);
+}
+
+.fields {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.field-card {
+  padding: 10px;
+}
+
+.field-head {
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+
+.field-label {
+  font-weight: 700;
+}
+
+.field-status {
+  color: var(--missing);
+  font-size: 12px;
+}
+
+.field-status.has-value {
+  color: var(--success);
+}
+
+.copy-row {
+  align-items: stretch;
+}
+
+.field-value {
+  flex: 1;
+  min-height: 34px;
+  max-height: 84px;
+  overflow: auto;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.copy-button {
+  width: 76px;
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.copy-button.copied {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.actions button {
+  width: 100%;
+}

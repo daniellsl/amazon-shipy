@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Amazon Shipy icon">
+  <rect width="128" height="128" rx="24" fill="#202124"/>
+  <path d="M26 38h76v52H26z" fill="#f3a847"/>
+  <path d="M34 47h60v34H34z" fill="#fff"/>
+  <path d="M43 58h42M43 69h30" stroke="#202124" stroke-width="7" stroke-linecap="round"/>
+  <path d="M27 91c20 13 52 13 74 0" fill="none" stroke="#ff9900" stroke-width="9" stroke-linecap="round"/>
+  <path d="M87 88l16 2-10 13" fill="none" stroke="#ff9900" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Amazon Shipy</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <div>
+          <h1>Amazon Shipy</h1>
+          <p id="connectionStatus">Open an Amazon Seller Central order page.</p>
+        </div>
+        <button id="refreshDetails" class="icon-button" title="Refresh order details" type="button">↻</button>
+      </header>
+
+      <section class="summary" aria-live="polite">
+        <span id="summaryText">No order loaded</span>
+      </section>
+
+      <section id="fieldList" class="fields"></section>
+
+      <footer class="actions">
+        <button id="copyAll" class="primary" type="button" disabled>Copy All</button>
+      </footer>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
