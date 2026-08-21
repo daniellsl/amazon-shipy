@@ -32,6 +32,7 @@ const els = {
   refreshDetails: $("#refreshDetails"),
   summaryText: $("#summaryText"),
   fieldList: $("#fieldList"),
+  checkAddress: $("#checkAddress"),
   copyAll: $("#copyAll")
 };
 
@@ -39,6 +40,7 @@ let latestDetails = null;
 
 document.addEventListener("DOMContentLoaded", init);
 els.refreshDetails.addEventListener("click", hydrateDetails);
+els.checkAddress.addEventListener("click", checkAddress);
 els.copyAll.addEventListener("click", copyAllDetails);
 
 async function init() {
@@ -53,6 +55,7 @@ async function hydrateDetails() {
     latestDetails = null;
     els.connectionStatus.textContent = "Open an Amazon Seller Central order page.";
     els.summaryText.textContent = "Seller Central tab not detected";
+    els.checkAddress.disabled = true;
     els.copyAll.disabled = true;
     renderFields({});
     return;
@@ -68,10 +71,12 @@ async function hydrateDetails() {
     latestDetails = response?.details || null;
     renderSummary(latestDetails);
     renderFields(latestDetails || {});
+    els.checkAddress.disabled = !hasAddressValue(latestDetails);
     els.copyAll.disabled = !hasAnyValue(latestDetails);
   } catch (error) {
     latestDetails = null;
     els.summaryText.textContent = error?.message || "Could not read this page";
+    els.checkAddress.disabled = true;
     els.copyAll.disabled = true;
     renderFields({});
   }
@@ -133,6 +138,13 @@ async function copyAllDetails() {
   markCopied(els.copyAll);
 }
 
+async function checkAddress() {
+  const address = buildMapAddress(latestDetails);
+  if (!address) return;
+  const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+  await chrome.tabs.create({ url });
+}
+
 function markCopied(button) {
   const original = button.textContent;
   button.textContent = "Copied";
@@ -145,6 +157,22 @@ function markCopied(button) {
 
 function hasAnyValue(details) {
   return Boolean(details && FIELDS.some(([key]) => clean(details[key])));
+}
+
+function hasAddressValue(details) {
+  return Boolean(buildMapAddress(details));
+}
+
+function buildMapAddress(details) {
+  if (!details) return "";
+  return [
+    details.addressLine1,
+    details.addressLine2,
+    details.city,
+    details.province,
+    details.postalCode,
+    details.country
+  ].map(clean).filter(Boolean).join(", ");
 }
 
 function clean(value) {

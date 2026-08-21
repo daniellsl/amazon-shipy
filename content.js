@@ -12,11 +12,13 @@
 
   function extractOrderDetails() {
     const pageText = normalizeText(document.body?.innerText || "");
-    const shippingText = findShippingBlockText();
+    const amazonOrder = extractAmazonOrderDetails();
+    const shippingText = amazonOrder.shippingText || findShippingBlockText();
     const address = parseAddress(shippingText || pageText);
 
     return {
       referenceNo: firstValue([
+        amazonOrder.orderId,
         findLabelValue(/(?:Amazon\s*)?Order\s*(?:ID|#|Number|No\.?)/i),
         findLabelValue(/Reference\s*(?:ID|#|Number|No\.?)/i),
         matchText(pageText, /\b(?:Amazon\s*)?Order\s*(?:ID|#|Number|No\.?)\s*[:#]?\s*([0-9]{3}-[0-9]{7}-[0-9]{7}|[A-Z0-9-]{8,})/i),
@@ -24,8 +26,7 @@
         matchText(location.pathname, /\/orders?(?:-v\d+)?\/(?:order\/)?([A-Z0-9-]{8,})/i)
       ]),
       clientName: firstValue([
-        findLabelValue(/(?:Buyer|Customer|Client|Recipient|Ship\s*to)\s*Name/i),
-        findLabelValue(/(?:Buyer|Customer|Client|Recipient|Ship\s*to)/i),
+        amazonOrder.recipientName,
         parseNameFromShippingBlock(shippingText)
       ]),
       addressLine1: address.addressLine1,
@@ -35,10 +36,36 @@
       country: address.country,
       postalCode: address.postalCode,
       contactNumber: firstValue([
+        amazonOrder.phone,
         findLabelValue(/(?:Contact|Phone|Telephone|Mobile)\s*(?:Number|No\.?)?/i),
         matchText(pageText, /(?:Contact|Phone|Telephone|Mobile)\s*(?:Number|No\.?)?\s*[:#]?\s*(\+?\d[\d\s().-]{6,}\d)/i)
       ])
     };
+  }
+
+  function extractAmazonOrderDetails() {
+    const shippingText = firstValue([
+      textByTestId("shipping-section-recipient-name"),
+      textByTestId("shipping-section-buyer-address")
+    ]);
+    return {
+      orderId: textByTestId("order-id-value"),
+      recipientName: parseNameFromShippingBlock(shippingText),
+      shippingText,
+      phone: textByTestId("shipping-section-phone")
+    };
+  }
+
+  function textByTestId(testId) {
+    const node = document.querySelector(`[data-test-id="${cssEscape(testId)}"]`);
+    return cleanNodeText(node);
+  }
+
+  function cleanNodeText(node) {
+    if (!node) return "";
+    const clone = node.cloneNode(true);
+    clone.querySelectorAll("script, style, props, template, noscript, input, button").forEach((child) => child.remove());
+    return normalizeLines(clone.innerText || clone.textContent || "");
   }
 
   function findShippingBlockText() {
@@ -108,10 +135,10 @@
     return {
       addressLine1: firstValue([explicit.addressLine1, parsed.addressLine1]),
       addressLine2: firstValue([explicit.addressLine2, parsed.addressLine2]),
-      city: firstValue([explicit.city, parsed.city]),
-      province: firstValue([explicit.province, parsed.province]),
-      country: firstValue([explicit.country, parsed.country]),
-      postalCode: firstValue([explicit.postalCode, parsed.postalCode])
+      city: firstValue([parsed.city, explicit.city]),
+      province: firstValue([parsed.province, explicit.province]),
+      country: firstValue([parsed.country, explicit.country]),
+      postalCode: firstValue([parsed.postalCode, explicit.postalCode])
     };
   }
 
@@ -122,23 +149,37 @@
       .filter(Boolean)
       .filter((line) => !/^(shipping address|ship to|recipient address|delivery address|buyer address)$/i.test(line))
       .filter((line) => !/^(copy|edit|print|refund|buy shipping|contact buyer)$/i.test(line))
+      .filter((line) => !/^(address type|residential|commercial|business)$/i.test(line.replace(/:$/, "")))
+      .filter((line) => !/^\{.*\}$/.test(line))
       .filter((line) => !/(order date|order total|sales channel|fulfillment|payment|status)/i.test(line));
   }
 
   function parseLooseAddressLines(lines) {
     const result = {};
     const addressLines = lines.filter((line) => !isAddressLabel(line));
-    const postalLine = addressLines.find((line) => /\b[A-Z]\d[A-Z][ -]?\d[A-Z]\d\b/i.test(line) || /\b\d{5}(?:-\d{4})?\b/.test(line));
-    const countryLine = [...addressLines].reverse().find((line) => looksLikeCountry(line));
-    const streetLines = addressLines.filter((line) => {
-      if (line === postalLine || line === countryLine) return false;
+    const countryIndex = findLastIndex(addressLines, looksLikeCountry);
+    const postalIndex = addressLines.findIndex((line) => /\b[A-Z]\d[A-Z][ -]?\d[A-Z]\d\b/i.test(line) || /\b\d{5}(?:-\d{4})?\b/.test(line));
+    const nameIndex = addressLines.findIndex((line) => !looksLikeAddressData(line) && !looksLikeCountry(line));
+    const cityProvincePostal = parseSplitCityProvincePostal(addressLines, postalIndex);
+    if (cityProvincePostal) {
+      Object.assign(result, cityProvincePostal);
+    }
+
+    const countryLine = countryIndex >= 0 ? addressLines[countryIndex] : "";
+    const excludedIndexes = new Set([countryIndex, postalIndex, nameIndex]);
+    if (cityProvincePostal) {
+      excludedIndexes.add(cityProvincePostal.cityIndex);
+      excludedIndexes.add(cityProvincePostal.provinceIndex);
+    }
+    const streetLines = addressLines.filter((line, index) => {
+      if (excludedIndexes.has(index) || line === countryLine) return false;
       if (/\+?\d[\d\s().-]{6,}\d/.test(line)) return false;
       if (looksLikeNameOnly(line)) return false;
       return true;
     });
 
-    if (postalLine) {
-      const cityParts = parseCityProvincePostal(postalLine);
+    if (!cityProvincePostal && postalIndex >= 0) {
+      const cityParts = parseCityProvincePostal(addressLines[postalIndex]);
       Object.assign(result, cityParts);
     }
     if (countryLine) result.country = countryLine;
@@ -147,10 +188,21 @@
     return result;
   }
 
+  function parseSplitCityProvincePostal(lines, postalIndex) {
+    if (postalIndex < 0) return null;
+    const postalCode = clean(lines[postalIndex]);
+    const provinceIndex = postalIndex - 1;
+    const cityIndex = postalIndex - 2;
+    const province = clean(lines[provinceIndex]);
+    const city = clean(lines[cityIndex] || "").replace(/,+$/g, "");
+    if (!city || !province || !looksLikeProvince(province)) return null;
+    return { city, province, postalCode: normalizePostalCode(postalCode), cityIndex, provinceIndex };
+  }
+
   function parseCityProvincePostal(line) {
-    const canadian = line.match(/^(.+?)[,\s]+([A-Z]{2})\s+([A-Z]\d[A-Z][ -]?\d[A-Z]\d)$/i);
+    const canadian = line.match(/^(.+?)[,\s]+(.+?)\s+([A-Z]\d[A-Z][ -]?\d[A-Z]\d)$/i);
     if (canadian) {
-      return { city: clean(canadian[1]), province: canadian[2].toUpperCase(), postalCode: canadian[3].toUpperCase() };
+      return { city: clean(canadian[1]), province: clean(canadian[2]), postalCode: normalizePostalCode(canadian[3]) };
     }
 
     const us = line.match(/^(.+?)[,\s]+([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/i);
@@ -162,12 +214,22 @@
     return {
       city: clean(line.replace(postal?.[0] || "", "").replace(/[,]+$/g, "")),
       province: "",
-      postalCode: postal?.[1] || ""
+      postalCode: normalizePostalCode(postal?.[1] || "")
     };
   }
 
   function looksLikeCountry(line) {
     return /^(canada|united states|usa|us|mexico|united kingdom|uk|australia|japan|india|singapore|france|germany|italy|spain)$/i.test(clean(line));
+  }
+
+  function looksLikeProvince(line) {
+    return /^(alberta|british columbia|manitoba|new brunswick|newfoundland and labrador|nova scotia|ontario|prince edward island|quebec|québec|saskatchewan|northwest territories|nunavut|yukon|ab|bc|mb|nb|nl|ns|nt|nu|on|pe|qc|sk|yt|[A-Z]{2})$/i.test(clean(line));
+  }
+
+  function normalizePostalCode(value) {
+    const text = clean(value);
+    if (/^[A-Z]\d[A-Z][ -]?\d[A-Z]\d$/i.test(text)) return text.replace(/\s+/g, "");
+    return text;
   }
 
   function looksLikeNameOnly(line) {
@@ -248,6 +310,18 @@
 
   function uniqueNodes(nodes) {
     return [...new Set(nodes)];
+  }
+
+  function findLastIndex(values, predicate) {
+    for (let index = values.length - 1; index >= 0; index -= 1) {
+      if (predicate(values[index], index)) return index;
+    }
+    return -1;
+  }
+
+  function cssEscape(value) {
+    if (globalThis.CSS?.escape) return CSS.escape(value);
+    return String(value).replace(/["\\]/g, "\\$&");
   }
 
   function normalizeLines(value) {
