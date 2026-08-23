@@ -65,7 +65,43 @@
     if (!node) return "";
     const clone = node.cloneNode(true);
     clone.querySelectorAll("script, style, props, template, noscript, input, button").forEach((child) => child.remove());
-    return normalizeLines(clone.innerText || clone.textContent || "");
+    return normalizeLines(textLinesFromNode(clone).join("\n"));
+  }
+
+  function textLinesFromNode(root) {
+    const lines = [];
+    let current = "";
+
+    const append = (value) => {
+      current += String(value || "").replace(/\u00a0/g, " ");
+    };
+    const flush = () => {
+      const line = clean(current);
+      if (line) lines.push(line);
+      current = "";
+    };
+    const walk = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        append(node.textContent);
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+      const tagName = node.tagName.toLowerCase();
+      if (tagName === "br") {
+        flush();
+        return;
+      }
+
+      const shouldSeparate = /^(address|article|div|li|p|section|table|tbody|td|tfoot|th|thead|tr)$/i.test(tagName);
+      if (shouldSeparate) flush();
+      [...node.childNodes].forEach(walk);
+      if (shouldSeparate) flush();
+    };
+
+    walk(root);
+    flush();
+    return lines;
   }
 
   function findShippingBlockText() {
@@ -133,8 +169,8 @@
     const lines = relevantAddressLines(text);
     const parsed = parseLooseAddressLines(lines);
     return {
-      addressLine1: firstValue([explicit.addressLine1, parsed.addressLine1]),
-      addressLine2: firstValue([explicit.addressLine2, parsed.addressLine2]),
+      addressLine1: firstValue([parsed.addressLine1, explicit.addressLine1]),
+      addressLine2: firstValue([parsed.addressLine2, explicit.addressLine2]),
       city: firstValue([parsed.city, explicit.city]),
       province: firstValue([parsed.province, explicit.province]),
       country: firstValue([parsed.country, explicit.country]),
@@ -200,9 +236,9 @@
   }
 
   function parseCityProvincePostal(line) {
-    const canadian = line.match(/^(.+?)[,\s]+(.+?)\s+([A-Z]\d[A-Z][ -]?\d[A-Z]\d)$/i);
+    const canadian = parseCanadianCityProvincePostal(line);
     if (canadian) {
-      return { city: clean(canadian[1]), province: clean(canadian[2]), postalCode: normalizePostalCode(canadian[3]) };
+      return canadian;
     }
 
     const us = line.match(/^(.+?)[,\s]+([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/i);
@@ -218,6 +254,26 @@
     };
   }
 
+  function parseCanadianCityProvincePostal(line) {
+    const postal = line.match(/\b([A-Z]\d[A-Z][ -]?\d[A-Z]\d)\b/i);
+    if (!postal) return null;
+
+    const beforePostal = clean(line.slice(0, postal.index)).replace(/,+$/g, "");
+    if (!beforePostal) return null;
+
+    const commaIndex = beforePostal.lastIndexOf(",");
+    if (commaIndex >= 0) {
+      const city = clean(beforePostal.slice(0, commaIndex));
+      const province = clean(beforePostal.slice(commaIndex + 1));
+      if (city && province) return { city, province, postalCode: normalizePostalCode(postal[1]) };
+    }
+
+    const provincePattern = "(alberta|british columbia|manitoba|new brunswick|newfoundland and labrador|nova scotia|ontario|prince edward island|quebec|québec|saskatchewan|northwest territories|nunavut|yukon|ab|bc|mb|nb|nl|ns|nt|nu|on|pe|qc|sk|yt)";
+    const match = beforePostal.match(new RegExp(`^(.+?)\\s+${provincePattern}$`, "i"));
+    if (!match) return null;
+    return { city: clean(match[1]), province: clean(match[2]), postalCode: normalizePostalCode(postal[1]) };
+  }
+
   function looksLikeCountry(line) {
     return /^(canada|united states|usa|us|mexico|united kingdom|uk|australia|japan|india|singapore|france|germany|italy|spain)$/i.test(clean(line));
   }
@@ -228,7 +284,10 @@
 
   function normalizePostalCode(value) {
     const text = clean(value);
-    if (/^[A-Z]\d[A-Z][ -]?\d[A-Z]\d$/i.test(text)) return text.replace(/\s+/g, "");
+    if (/^[A-Z]\d[A-Z][ -]?\d[A-Z]\d$/i.test(text)) {
+      const compact = text.replace(/\s+/g, "").toUpperCase();
+      return `${compact.slice(0, 3)} ${compact.slice(3)}`;
+    }
     return text;
   }
 
