@@ -41,4 +41,5 @@ Each detected field has its own **Copy** button. The popup also includes **Copy 
 ```bash
 node --check popup.js
 node --check content.js
+node tests/address-parser.test.js
 ```

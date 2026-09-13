@@ -2,6 +2,17 @@
   if (window.__AMAZON_SHIPY_CONTENT_LOADED__) return;
   window.__AMAZON_SHIPY_CONTENT_LOADED__ = true;
 
+  const ADDRESS_FIELDS = ["clientName", "addressLine1", "addressLine2", "city", "province", "country", "postalCode"];
+  const ADDRESS_SPAN_KEYS = ["clientName", "addressLine1", "addressLine2", "city", "province", "postalCode", "country"];
+  const ADDRESS_SPAN_KEYS_WITHOUT_LINE_2 = ["clientName", "addressLine1", "city", "province", "postalCode", "country"];
+  const CANADIAN_POSTAL_PATTERN = /[A-Z]\d[A-Z][ -]?\d[A-Z]\d/i;
+  const CANADIAN_POSTAL_EXACT_PATTERN = /^[A-Z]\d[A-Z][ -]?\d[A-Z]\d$/i;
+  const US_POSTAL_PATTERN = /\d{5}(?:-\d{4})?/;
+  const POSTAL_PATTERN = new RegExp(`\\b(${CANADIAN_POSTAL_PATTERN.source}|${US_POSTAL_PATTERN.source})\\b`, "i");
+  const COUNTRY_PATTERN = /^(canada|united states|usa|us|mexico|united kingdom|uk|australia|japan|india|singapore|france|germany|italy|spain)$/i;
+  const PROVINCE_PATTERN_SOURCE = "alberta|british columbia|manitoba|new brunswick|newfoundland and labrador|nova scotia|ontario|prince edward island|quebec|québec|saskatchewan|northwest territories|nunavut|yukon|ab|bc|mb|nb|nl|ns|nt|nu|on|pe|qc|sk|yt";
+  const PROVINCE_PATTERN = new RegExp(`^(${PROVINCE_PATTERN_SOURCE}|[A-Z]{2})$`, "i");
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "AMAZON_SHIPY_GET_ORDER_DETAILS") {
       sendResponse({ ok: true, details: extractOrderDetails() });
@@ -14,7 +25,7 @@
     const pageText = normalizeText(document.body?.innerText || "");
     const amazonOrder = extractAmazonOrderDetails();
     const shippingText = amazonOrder.shippingText || findShippingBlockText();
-    const address = parseAddress(shippingText || pageText);
+    const address = mergeAddress(amazonOrder.address, parseAddress(shippingText || pageText));
 
     return {
       referenceNo: firstValue([
@@ -26,6 +37,7 @@
         matchText(location.pathname, /\/orders?(?:-v\d+)?\/(?:order\/)?([A-Z0-9-]{8,})/i)
       ]),
       clientName: firstValue([
+        address.clientName,
         amazonOrder.recipientName,
         parseNameFromShippingBlock(shippingText)
       ]),
@@ -44,21 +56,56 @@
   }
 
   function extractAmazonOrderDetails() {
-    const shippingText = firstValue([
-      textByTestId("shipping-section-recipient-name"),
-      textByTestId("shipping-section-buyer-address")
-    ]);
+    const addressNode = nodeByTestId("shipping-section-buyer-address");
+    const address = parseAmazonAddressNode(addressNode);
+    const shippingText = firstValue([cleanNodeText(addressNode), textByTestId("shipping-section-recipient-name")]);
     return {
       orderId: textByTestId("order-id-value"),
-      recipientName: parseNameFromShippingBlock(shippingText),
+      recipientName: firstValue([address.clientName, parseNameFromShippingBlock(shippingText)]),
+      address,
       shippingText,
       phone: textByTestId("shipping-section-phone")
     };
   }
 
   function textByTestId(testId) {
-    const node = document.querySelector(`[data-test-id="${cssEscape(testId)}"]`);
-    return cleanNodeText(node);
+    return cleanNodeText(nodeByTestId(testId));
+  }
+
+  function nodeByTestId(testId) {
+    return document.querySelector(`[data-test-id="${cssEscape(testId)}"]`);
+  }
+
+  function parseAmazonAddressNode(node) {
+    if (!node) return emptyAddress();
+
+    const spanValues = [...node.children]
+      .filter((child) => child.tagName?.toLowerCase() === "span")
+      .map((span) => clean(textLinesFromNode(span).join(" ")))
+      .filter(Boolean);
+
+    return mapAddressSpanValues(spanValues);
+  }
+
+  function emptyAddress() {
+    return Object.fromEntries(ADDRESS_FIELDS.map((field) => [field, ""]));
+  }
+
+  function mergeAddress(primary, fallback) {
+    return Object.fromEntries(ADDRESS_FIELDS.map((field) => [field, firstValue([primary?.[field], fallback?.[field]])]));
+  }
+
+  function mapAddressSpanValues(spanValues) {
+    const keys = spanValues.length === 7 ? ADDRESS_SPAN_KEYS : ADDRESS_SPAN_KEYS_WITHOUT_LINE_2;
+    if (spanValues.length !== keys.length) return emptyAddress();
+
+    const address = emptyAddress();
+    keys.forEach((key, index) => {
+      address[key] = spanValues[index] || "";
+    });
+    address.city = stripTrailingComma(address.city);
+    address.postalCode = normalizePostalCode(address.postalCode);
+    return address;
   }
 
   function cleanNodeText(node) {
@@ -145,7 +192,7 @@
     let score = 0;
     if (/shipping address|ship to|recipient address|delivery address/i.test(text)) score += 12;
     if (/city|province|state|postal|zip|country/i.test(text)) score += 8;
-    if (/\b[A-Z]\d[A-Z][ -]?\d[A-Z]\d\b/i.test(text) || /\b\d{5}(?:-\d{4})?\b/.test(text)) score += 6;
+    if (POSTAL_PATTERN.test(text)) score += 6;
     if (/\+?\d[\d\s().-]{6,}\d/.test(text)) score += 3;
     return score - Math.max(0, text.length - 500) / 100;
   }
@@ -194,7 +241,7 @@
     const result = {};
     const addressLines = lines.filter((line) => !isAddressLabel(line));
     const countryIndex = findLastIndex(addressLines, looksLikeCountry);
-    const postalIndex = addressLines.findIndex((line) => /\b[A-Z]\d[A-Z][ -]?\d[A-Z]\d\b/i.test(line) || /\b\d{5}(?:-\d{4})?\b/.test(line));
+    const postalIndex = addressLines.findIndex((line) => POSTAL_PATTERN.test(line));
     const nameIndex = addressLines.findIndex((line) => !looksLikeAddressData(line) && !looksLikeCountry(line));
     const cityProvincePostal = parseSplitCityProvincePostal(addressLines, postalIndex);
     if (cityProvincePostal) {
@@ -230,7 +277,7 @@
     const provinceIndex = postalIndex - 1;
     const cityIndex = postalIndex - 2;
     const province = clean(lines[provinceIndex]);
-    const city = clean(lines[cityIndex] || "").replace(/,+$/g, "");
+    const city = stripTrailingComma(lines[cityIndex]);
     if (!city || !province || !looksLikeProvince(province)) return null;
     return { city, province, postalCode: normalizePostalCode(postalCode), cityIndex, provinceIndex };
   }
@@ -243,52 +290,55 @@
 
     const us = line.match(/^(.+?)[,\s]+([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/i);
     if (us) {
-      return { city: clean(us[1]), province: us[2].toUpperCase(), postalCode: us[3] };
+      return { city: stripTrailingComma(us[1]), province: clean(us[2]), postalCode: us[3] };
     }
 
-    const postal = line.match(/\b([A-Z]\d[A-Z][ -]?\d[A-Z]\d|\d{5}(?:-\d{4})?)\b/i);
+    const postal = line.match(POSTAL_PATTERN);
     return {
-      city: clean(line.replace(postal?.[0] || "", "").replace(/[,]+$/g, "")),
+      city: stripTrailingComma(line.replace(postal?.[0] || "", "")),
       province: "",
       postalCode: normalizePostalCode(postal?.[1] || "")
     };
   }
 
   function parseCanadianCityProvincePostal(line) {
-    const postal = line.match(/\b([A-Z]\d[A-Z][ -]?\d[A-Z]\d)\b/i);
+    const postal = line.match(new RegExp(`\\b(${CANADIAN_POSTAL_PATTERN.source})\\b`, "i"));
     if (!postal) return null;
 
-    const beforePostal = clean(line.slice(0, postal.index)).replace(/,+$/g, "");
+    const beforePostal = stripTrailingComma(line.slice(0, postal.index));
     if (!beforePostal) return null;
 
     const commaIndex = beforePostal.lastIndexOf(",");
     if (commaIndex >= 0) {
-      const city = clean(beforePostal.slice(0, commaIndex));
+      const city = stripTrailingComma(beforePostal.slice(0, commaIndex));
       const province = clean(beforePostal.slice(commaIndex + 1));
       if (city && province) return { city, province, postalCode: normalizePostalCode(postal[1]) };
     }
 
-    const provincePattern = "(alberta|british columbia|manitoba|new brunswick|newfoundland and labrador|nova scotia|ontario|prince edward island|quebec|québec|saskatchewan|northwest territories|nunavut|yukon|ab|bc|mb|nb|nl|ns|nt|nu|on|pe|qc|sk|yt)";
-    const match = beforePostal.match(new RegExp(`^(.+?)\\s+${provincePattern}$`, "i"));
+    const match = beforePostal.match(new RegExp(`^(.+?)\\s+(${PROVINCE_PATTERN_SOURCE})$`, "i"));
     if (!match) return null;
-    return { city: clean(match[1]), province: clean(match[2]), postalCode: normalizePostalCode(postal[1]) };
+    return { city: stripTrailingComma(match[1]), province: clean(match[2]), postalCode: normalizePostalCode(postal[1]) };
   }
 
   function looksLikeCountry(line) {
-    return /^(canada|united states|usa|us|mexico|united kingdom|uk|australia|japan|india|singapore|france|germany|italy|spain)$/i.test(clean(line));
+    return COUNTRY_PATTERN.test(clean(line));
   }
 
   function looksLikeProvince(line) {
-    return /^(alberta|british columbia|manitoba|new brunswick|newfoundland and labrador|nova scotia|ontario|prince edward island|quebec|québec|saskatchewan|northwest territories|nunavut|yukon|ab|bc|mb|nb|nl|ns|nt|nu|on|pe|qc|sk|yt|[A-Z]{2})$/i.test(clean(line));
+    return PROVINCE_PATTERN.test(clean(line));
   }
 
   function normalizePostalCode(value) {
     const text = clean(value);
-    if (/^[A-Z]\d[A-Z][ -]?\d[A-Z]\d$/i.test(text)) {
+    if (CANADIAN_POSTAL_EXACT_PATTERN.test(text)) {
       const compact = text.replace(/\s+/g, "").toUpperCase();
       return `${compact.slice(0, 3)} ${compact.slice(3)}`;
     }
     return text;
+  }
+
+  function stripTrailingComma(value) {
+    return clean(value).replace(/,+$/g, "");
   }
 
   function looksLikeNameOnly(line) {
@@ -381,6 +431,15 @@
   function cssEscape(value) {
     if (globalThis.CSS?.escape) return CSS.escape(value);
     return String(value).replace(/["\\]/g, "\\$&");
+  }
+
+  if (globalThis.__AMAZON_SHIPY_ENABLE_TEST_API__) {
+    globalThis.__AMAZON_SHIPY_TEST_API__ = {
+      clean,
+      mapAddressSpanValues,
+      normalizePostalCode,
+      stripTrailingComma
+    };
   }
 
   function normalizeLines(value) {

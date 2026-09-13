@@ -12,6 +12,8 @@ const FIELDS = [
   ["contactNumber", "Contact Number"]
 ];
 
+const ADDRESS_FIELD_KEYS = ["addressLine1", "addressLine2", "city", "province", "postalCode", "country"];
+
 const AMAZON_SELLER_CENTRAL_HOSTS = new Set([
   "sellercentral.amazon.com",
   "sellercentral.amazon.ca",
@@ -55,8 +57,7 @@ async function hydrateDetails() {
     latestDetails = null;
     els.connectionStatus.textContent = "Open an Amazon Seller Central order page.";
     els.summaryText.textContent = "Seller Central tab not detected";
-    els.checkAddress.disabled = true;
-    els.copyAll.disabled = true;
+    setActionState(null);
     renderFields({});
     return;
   }
@@ -71,13 +72,11 @@ async function hydrateDetails() {
     latestDetails = response?.details || null;
     renderSummary(latestDetails);
     renderFields(latestDetails || {});
-    els.checkAddress.disabled = !hasAddressValue(latestDetails);
-    els.copyAll.disabled = !hasAnyValue(latestDetails);
+    setActionState(latestDetails);
   } catch (error) {
     latestDetails = null;
     els.summaryText.textContent = error?.message || "Could not read this page";
-    els.checkAddress.disabled = true;
-    els.copyAll.disabled = true;
+    setActionState(null);
     renderFields({});
   }
 }
@@ -163,16 +162,14 @@ function hasAddressValue(details) {
   return Boolean(buildMapAddress(details));
 }
 
+function setActionState(details) {
+  els.checkAddress.disabled = !hasAddressValue(details);
+  els.copyAll.disabled = !hasAnyValue(details);
+}
+
 function buildMapAddress(details) {
   if (!details) return "";
-  return [
-    details.addressLine1,
-    details.addressLine2,
-    details.city,
-    details.province,
-    details.postalCode,
-    details.country
-  ].map(clean).filter(Boolean).join(", ");
+  return ADDRESS_FIELD_KEYS.map((key) => clean(details[key])).filter(Boolean).join(", ");
 }
 
 function clean(value) {
